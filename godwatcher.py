@@ -1,50 +1,59 @@
 import struct
 import binascii
+import logging
+from logging import debug, error
 from os import listdir
 from os.path import isfile, join
 from hashlib import md5
+
+logging.setLoggerClass(logging.DEBUG | logging.ERROR)
 # name of sample file in current directory
 sample_name = "TFTP.exe"
+# samples signature and hash values
 s_sig = 0
 s_hash = 0
 
 
-def hashcalc(path):
+def hashcalc(file_path):
     try:
-        with open(path, 'rb') as f:
+        with open(file_path, 'rb') as f:
             if 'MZ' == f.read(2):
                 m = md5()
                 f.seek(0)
                 m.update(f.read())
                 return m.digest()
     except IOError:
-        print "access denied: %s", path
+        error("access denied: %s" % file_path)
 
 
-def extract_cs(path):
+def extract_cs(file_path):
     try:
-        with open(path, "rb") as f:
+        with open(file_path, "rb") as f:
             if 'MZ' == f.read(2):
                 f.seek(0x3c)
                 e_lfanew = struct.unpack("<i", f.read(4))[0]  # offset to PE
                 f.seek(e_lfanew + 6)
+                sections_count = struct.unpack('H', f.read(2))[0]
+                debug("file: %s" % file_path)
+                debug("offset to PE section table %s" % binascii.hexlify(e_lfanew))
+                debug("sections count %d" % sections_count)
                 try:
-                    for i in range(struct.unpack('H', f.read(2))[0]):  # loop sections
+                    for i in range(sections_count):  # loop sections
                         f.seek(e_lfanew + 248 + 40 * i)
                         section_name = f.read(8)
                         if '.text' in section_name and 'bss' not in section_name:
                             f.seek(e_lfanew + 248 + 40 * i + 16)
                             cs_prop = [struct.unpack('<i', f.read(4))[0], struct.unpack('<i', f.read(4))[0]]
                             f.seek(cs_prop[1])
+                            debug(".text size: %s , offset: %s" % (cs_prop[0], cs_prop[1]))
                             return f.read(cs_prop[0])
                 except struct.error:
-                    print "file was packed: ", path
+                    error("MZ file was packed: %s , e_lfanew: " % (file_path, binascii.hexlify(e_lfanew)))
     except IOError:
-        print "access denied: ", path
+        error("access denied: %s" % file_path)
 
 
 props = eval(open("props.txt", 'r').readline())
-
 if props['type'] == 'sig':
     sample_cs = extract_cs(sample_name)
     s_sig = sample_cs[len(sample_cs) / 2:len(sample_cs) / 2 + 32]
